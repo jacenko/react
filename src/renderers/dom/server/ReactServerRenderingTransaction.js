@@ -14,7 +14,6 @@
 var PooledClass = require('PooledClass');
 var Transaction = require('Transaction');
 
-var assign = require('Object.assign');
 
 /**
  * Executed within the scope of the `Transaction` instance. Consider these as
@@ -61,10 +60,16 @@ var Mixin = {
    */
   destructor: function() {
   },
+
+  checkpoint: function() {
+  },
+
+  rollback: function() {
+  },
 };
 
 
-assign(
+Object.assign(
   ReactServerRenderingTransaction.prototype,
   Transaction.Mixin,
   Mixin

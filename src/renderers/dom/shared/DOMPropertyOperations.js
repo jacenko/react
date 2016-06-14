@@ -12,13 +12,16 @@
 'use strict';
 
 var DOMProperty = require('DOMProperty');
+var ReactDOMComponentTree = require('ReactDOMComponentTree');
 var ReactDOMInstrumentation = require('ReactDOMInstrumentation');
-var ReactPerf = require('ReactPerf');
+var ReactInstrumentation = require('ReactInstrumentation');
 
 var quoteAttributeValueForBrowser = require('quoteAttributeValueForBrowser');
 var warning = require('warning');
 
-var VALID_ATTRIBUTE_NAME_REGEX = new RegExp('^[' + DOMProperty.ATTRIBUTE_NAME_START_CHAR + '][' + DOMProperty.ATTRIBUTE_NAME_CHAR + ']*$');
+var VALID_ATTRIBUTE_NAME_REGEX = new RegExp(
+  '^[' + DOMProperty.ATTRIBUTE_NAME_START_CHAR + '][' + DOMProperty.ATTRIBUTE_NAME_CHAR + ']*$'
+);
 var illegalAttributeNameCache = {};
 var validatedAttributeNameCache = {};
 
@@ -125,31 +128,6 @@ var DOMPropertyOperations = {
   },
 
   /**
-   * Creates markup for an SVG property.
-   *
-   * @param {string} name
-   * @param {*} value
-   * @return {string} Markup string, or empty string if the property was invalid.
-   */
-  createMarkupForSVGAttribute: function(name, value) {
-    if (__DEV__) {
-      ReactDOMInstrumentation.debugTool.onCreateMarkupForSVGAttribute(name, value);
-    }
-    if (!isAttributeNameSafe(name) || value == null) {
-      return '';
-    }
-    var propertyInfo = DOMProperty.properties.hasOwnProperty(name) ?
-        DOMProperty.properties[name] : null;
-    if (propertyInfo) {
-      // Migration path for deprecated camelCase aliases for SVG attributes
-      var { attributeName } = propertyInfo;
-      return attributeName + '=' + quoteAttributeValueForBrowser(value);
-    } else {
-      return name + '=' + quoteAttributeValueForBrowser(value);
-    }
-  },
-
-  /**
    * Sets the value for a property on a node.
    *
    * @param {DOMElement} node
@@ -157,9 +135,6 @@ var DOMPropertyOperations = {
    * @param {*} value
    */
   setValueForProperty: function(node, name, value) {
-    if (__DEV__) {
-      ReactDOMInstrumentation.debugTool.onSetValueForProperty(node, name, value);
-    }
     var propertyInfo = DOMProperty.properties.hasOwnProperty(name) ?
         DOMProperty.properties[name] : null;
     if (propertyInfo) {
@@ -168,7 +143,18 @@ var DOMPropertyOperations = {
         mutationMethod(node, value);
       } else if (shouldIgnoreValue(propertyInfo, value)) {
         this.deleteValueForProperty(node, name);
-      } else if (propertyInfo.mustUseAttribute) {
+        return;
+      } else if (propertyInfo.mustUseProperty) {
+        var propName = propertyInfo.propertyName;
+        // Must explicitly cast values for HAS_SIDE_EFFECTS-properties to the
+        // property type before comparing; only `value` does and is string.
+        if (!propertyInfo.hasSideEffects ||
+            ('' + node[propName]) !== ('' + value)) {
+          // Contrary to `setAttribute`, object properties are properly
+          // `toString`ed by IE8/9.
+          node[propName] = value;
+        }
+      } else {
         var attributeName = propertyInfo.attributeName;
         var namespace = propertyInfo.attributeNamespace;
         // `setAttribute` with objects becomes only `[object]` in IE8/9,
@@ -181,19 +167,21 @@ var DOMPropertyOperations = {
         } else {
           node.setAttribute(attributeName, '' + value);
         }
-      } else {
-        var propName = propertyInfo.propertyName;
-        // Must explicitly cast values for HAS_SIDE_EFFECTS-properties to the
-        // property type before comparing; only `value` does and is string.
-        if (!propertyInfo.hasSideEffects ||
-            ('' + node[propName]) !== ('' + value)) {
-          // Contrary to `setAttribute`, object properties are properly
-          // `toString`ed by IE8/9.
-          node[propName] = value;
-        }
       }
     } else if (DOMProperty.isCustomAttribute(name)) {
       DOMPropertyOperations.setValueForAttribute(node, name, value);
+      return;
+    }
+
+    if (__DEV__) {
+      ReactDOMInstrumentation.debugTool.onSetValueForProperty(node, name, value);
+      var payload = {};
+      payload[name] = value;
+      ReactInstrumentation.debugTool.onHostOperation(
+        ReactDOMComponentTree.getInstanceFromNode(node)._debugID,
+        'update attribute',
+        payload
+      );
     }
   },
 
@@ -206,17 +194,33 @@ var DOMPropertyOperations = {
     } else {
       node.setAttribute(name, '' + value);
     }
+
+    if (__DEV__) {
+      var payload = {};
+      payload[name] = value;
+      ReactInstrumentation.debugTool.onHostOperation(
+        ReactDOMComponentTree.getInstanceFromNode(node)._debugID,
+        'update attribute',
+        payload
+      );
+    }
   },
 
-  setValueForSVGAttribute: function(node, name, value) {
+  /**
+   * Deletes an attributes from a node.
+   *
+   * @param {DOMElement} node
+   * @param {string} name
+   */
+  deleteValueForAttribute: function(node, name) {
+    node.removeAttribute(name);
     if (__DEV__) {
-      ReactDOMInstrumentation.debugTool.onSetValueForSVGAttribute(node, name, value);
-    }
-    if (DOMProperty.properties.hasOwnProperty(name)) {
-      // Migration path for deprecated camelCase aliases for SVG attributes
-      DOMPropertyOperations.setValueForProperty(node, name, value);
-    } else {
-      DOMPropertyOperations.setValueForAttribute(node, name, value);
+      ReactDOMInstrumentation.debugTool.onDeleteValueForProperty(node, name);
+      ReactInstrumentation.debugTool.onHostOperation(
+        ReactDOMComponentTree.getInstanceFromNode(node)._debugID,
+        'remove attribute',
+        name
+      );
     }
   },
 
@@ -227,49 +231,40 @@ var DOMPropertyOperations = {
    * @param {string} name
    */
   deleteValueForProperty: function(node, name) {
-    if (__DEV__) {
-      ReactDOMInstrumentation.debugTool.onDeleteValueForProperty(node, name);
-    }
     var propertyInfo = DOMProperty.properties.hasOwnProperty(name) ?
         DOMProperty.properties[name] : null;
     if (propertyInfo) {
       var mutationMethod = propertyInfo.mutationMethod;
       if (mutationMethod) {
         mutationMethod(node, undefined);
-      } else if (propertyInfo.mustUseAttribute) {
-        node.removeAttribute(propertyInfo.attributeName);
-      } else {
+      } else if (propertyInfo.mustUseProperty) {
         var propName = propertyInfo.propertyName;
-        var defaultValue = DOMProperty.getDefaultValueForProperty(
-          node.nodeName,
-          propName
-        );
-        if (!propertyInfo.hasSideEffects ||
-            ('' + node[propName]) !== defaultValue) {
-          node[propName] = defaultValue;
+        if (propertyInfo.hasBooleanValue) {
+          // No HAS_SIDE_EFFECTS logic here, only `value` has it and is string.
+          node[propName] = false;
+        } else {
+          if (!propertyInfo.hasSideEffects ||
+              ('' + node[propName]) !== '') {
+            node[propName] = '';
+          }
         }
+      } else {
+        node.removeAttribute(propertyInfo.attributeName);
       }
     } else if (DOMProperty.isCustomAttribute(name)) {
       node.removeAttribute(name);
     }
-  },
 
-  deleteValueForSVGAttribute: function(node, name) {
-    var propertyInfo = DOMProperty.properties.hasOwnProperty(name) ?
-        DOMProperty.properties[name] : null;
-    if (propertyInfo) {
-      DOMPropertyOperations.deleteValueForProperty(node, name);
-    } else {
-      node.removeAttribute(name);
+    if (__DEV__) {
+      ReactDOMInstrumentation.debugTool.onDeleteValueForProperty(node, name);
+      ReactInstrumentation.debugTool.onHostOperation(
+        ReactDOMComponentTree.getInstanceFromNode(node)._debugID,
+        'remove attribute',
+        name
+      );
     }
   },
 
 };
-
-ReactPerf.measureMethods(DOMPropertyOperations, 'DOMPropertyOperations', {
-  setValueForProperty: 'setValueForProperty',
-  setValueForAttribute: 'setValueForAttribute',
-  deleteValueForProperty: 'deleteValueForProperty',
-});
 
 module.exports = DOMPropertyOperations;

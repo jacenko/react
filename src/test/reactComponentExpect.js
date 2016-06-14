@@ -7,7 +7,6 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  *
  * @providesModule reactComponentExpect
- * @nolint
  */
 
 'use strict';
@@ -15,7 +14,6 @@
 var ReactInstanceMap = require('ReactInstanceMap');
 var ReactTestUtils = require('ReactTestUtils');
 
-var assign = require('Object.assign');
 var invariant = require('invariant');
 
 function reactComponentExpect(instance) {
@@ -47,7 +45,7 @@ function reactComponentExpectInternal(internalInstance) {
   this._instance = internalInstance;
 }
 
-assign(reactComponentExpectInternal.prototype, {
+Object.assign(reactComponentExpectInternal.prototype, {
   // Getters -------------------------------------------------------------------
 
   /**

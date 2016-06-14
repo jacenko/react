@@ -13,8 +13,6 @@
 
 var React = require('React');
 
-var assign = require('Object.assign');
-
 var ReactTransitionGroup = require('ReactTransitionGroup');
 var ReactCSSTransitionGroupChild = require('ReactCSSTransitionGroupChild');
 
@@ -43,6 +41,11 @@ function createTransitionTimeoutPropValidator(transitionType) {
   };
 }
 
+/**
+ * An easy way to perform CSS transitions and animations when a React component
+ * enters or leaves the DOM.
+ * See https://facebook.github.io/react/docs/animation.html#high-level-api-reactcsstransitiongroup
+ */
 var ReactCSSTransitionGroup = React.createClass({
   displayName: 'ReactCSSTransitionGroup',
 
@@ -87,7 +90,7 @@ var ReactCSSTransitionGroup = React.createClass({
   render: function() {
     return React.createElement(
       ReactTransitionGroup,
-      assign({}, this.props, {childFactory: this._wrapChild})
+      Object.assign({}, this.props, {childFactory: this._wrapChild})
     );
   },
 });

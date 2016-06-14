@@ -47,6 +47,26 @@ describe('ReactTestUtils', function() {
     ]);
   });
 
+  it('should shallow render a functional component', function() {
+    function SomeComponent() {
+      return (
+        <div>
+          <span className="child1" />
+          <span className="child2" />
+        </div>
+      );
+    }
+
+    var shallowRenderer = ReactTestUtils.createRenderer();
+    var result = shallowRenderer.render(<SomeComponent />);
+
+    expect(result.type).toBe('div');
+    expect(result.props.children).toEqual([
+      <span className="child1" />,
+      <span className="child2" />,
+    ]);
+  });
+
   it('should throw for invalid elements', function() {
     var SomeComponent = React.createClass({
       render: function() {
@@ -55,12 +75,12 @@ describe('ReactTestUtils', function() {
     });
 
     var shallowRenderer = ReactTestUtils.createRenderer();
-    expect(() => shallowRenderer.render(SomeComponent)).toThrow(
+    expect(() => shallowRenderer.render(SomeComponent)).toThrowError(
       'ReactShallowRenderer render(): Invalid component element. Instead of ' +
       'passing a component class, make sure to instantiate it by passing it ' +
       'to React.createElement.'
     );
-    expect(() => shallowRenderer.render(<div />)).toThrow(
+    expect(() => shallowRenderer.render(<div />)).toThrowError(
       'ReactShallowRenderer render(): Shallow rendering works only with ' +
       'custom components, not primitives (div). Instead of calling ' +
       '`.render(el)` and inspecting the rendered output, look at `el.props` ' +
@@ -69,7 +89,7 @@ describe('ReactTestUtils', function() {
   });
 
   it('should have shallow unmounting', function() {
-    var componentWillUnmount = jest.genMockFn();
+    var componentWillUnmount = jest.fn();
 
     var SomeComponent = React.createClass({
       render: function() {
@@ -201,7 +221,13 @@ describe('ReactTestUtils', function() {
         this.setState({ clicked: true });
       },
       render: function() {
-        return <div ref={() => {}} onClick={this.handleUserClick} className={this.state.clicked ? 'clicked' : ''}></div>;
+        return (
+          <div
+            ref={() => {}}
+            onClick={this.handleUserClick}
+            className={this.state.clicked ? 'clicked' : ''}
+          />
+        );
       },
     });
 
@@ -247,6 +273,29 @@ describe('ReactTestUtils', function() {
       name: 'foo',
     });
     expect(result).toEqual(<div>foo</div>);
+  });
+
+  it('can fail context when shallowly rendering', function() {
+    spyOn(console, 'error');
+    var SimpleComponent = React.createClass({
+      contextTypes: {
+        name: React.PropTypes.string.isRequired,
+      },
+      render: function() {
+        return <div>{this.context.name}</div>;
+      },
+    });
+
+    var shallowRenderer = ReactTestUtils.createRenderer();
+    shallowRenderer.render(<SimpleComponent />);
+    expect(console.error.calls.count()).toBe(1);
+    expect(
+      console.error.calls.argsFor(0)[0].replace(/\(at .+?:\d+\)/g, '(at **)')
+    ).toBe(
+      'Warning: Failed context type: Required context `name` was not ' +
+      'specified in `SimpleComponent`.\n' +
+      '    in SimpleComponent (at **)'
+    );
   });
 
   it('can scryRenderedDOMComponentsWithClass with TextComponent', function() {
@@ -352,33 +401,6 @@ describe('ReactTestUtils', function() {
     expect(log).toEqual(['orangepurple', 'orange', 'purple']);
   });
 
-  it('does not warn for getDOMNode on ES6 classes', function() {
-    var Foo = React.createClass({
-      render: function() {
-        return <div />;
-      },
-    });
-
-    class Bar extends React.Component {
-      render() {
-        return <div />;
-      }
-    }
-
-    spyOn(console, 'error');
-
-    var foo = ReactTestUtils.renderIntoDocument(<Foo />);
-    expect(ReactTestUtils.isDOMComponent(foo)).toBe(false);
-
-    var bar = ReactTestUtils.renderIntoDocument(<Bar />);
-    expect(ReactTestUtils.isDOMComponent(bar)).toBe(false);
-
-    var div = ReactTestUtils.renderIntoDocument(<div />);
-    expect(ReactTestUtils.isDOMComponent(div)).toBe(true);
-
-    expect(console.error.calls.length).toBe(0);
-  });
-
   it('should support injected wrapper components as DOM components', function() {
     var getTestDocument = require('getTestDocument');
 
@@ -431,15 +453,20 @@ describe('ReactTestUtils', function() {
   });
 
   it('should change the value of an input field', function() {
-    var handler = jasmine.createSpy('spy');
+    var obj = {
+      handler: function(e) {
+        e.persist();
+      },
+    };
+    spyOn(obj, 'handler').and.callThrough();
     var container = document.createElement('div');
-    var instance = ReactDOM.render(<input type="text" onChange={handler} />, container);
+    var instance = ReactDOM.render(<input type="text" onChange={obj.handler} />, container);
 
     var node = ReactDOM.findDOMNode(instance);
     node.value = 'giraffe';
     ReactTestUtils.Simulate.change(node);
 
-    expect(handler).toHaveBeenCalledWith(jasmine.objectContaining({target: node}));
+    expect(obj.handler).toHaveBeenCalledWith(jasmine.objectContaining({target: node}));
   });
 
   it('should change the value of an input field in a component', function() {
@@ -453,15 +480,20 @@ describe('ReactTestUtils', function() {
       },
     });
 
-    var handler = jasmine.createSpy('spy');
+    var obj = {
+      handler: function(e) {
+        e.persist();
+      },
+    };
+    spyOn(obj, 'handler').and.callThrough();
     var container = document.createElement('div');
-    var instance = ReactDOM.render(<SomeComponent handleChange={handler} />, container);
+    var instance = ReactDOM.render(<SomeComponent handleChange={obj.handler} />, container);
 
     var node = ReactDOM.findDOMNode(instance.refs.input);
     node.value = 'zebra';
     ReactTestUtils.Simulate.change(node);
 
-    expect(handler).toHaveBeenCalledWith(jasmine.objectContaining({target: node}));
+    expect(obj.handler).toHaveBeenCalledWith(jasmine.objectContaining({target: node}));
   });
 
   it('should throw when attempting to use ReactTestUtils.Simulate with shallow rendering', function() {
@@ -478,11 +510,34 @@ describe('ReactTestUtils', function() {
     var shallowRenderer = ReactTestUtils.createRenderer();
     var result = shallowRenderer.render(<SomeComponent handleClick={handler} />);
 
-    expect(() => ReactTestUtils.Simulate.click(result)).toThrow(
+    expect(() => ReactTestUtils.Simulate.click(result)).toThrowError(
       'TestUtils.Simulate expects a component instance and not a ReactElement.' +
       'TestUtils.Simulate will not work if you are using shallow rendering.'
     );
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('should not warn when simulating events with extra properties', function() {
+    spyOn(console, 'error');
+
+    var CLIENT_X = 100;
+
+    var Component = React.createClass({
+      handleClick: function(e) {
+        expect(e.clientX).toBe(CLIENT_X);
+      },
+      render: function() {
+        return <div onClick={this.handleClick} />;
+      },
+    });
+
+    var element = document.createElement('div');
+    var instance = ReactDOM.render(<Component />, element);
+    ReactTestUtils.Simulate.click(
+      ReactDOM.findDOMNode(instance),
+      {clientX: CLIENT_X}
+    );
+    expect(console.error.calls.count()).toBe(0);
   });
 
   it('can scry with stateless components involved', function() {

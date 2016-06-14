@@ -1,12 +1,5 @@
-// We run our own grunt task instead of using grunt-jest so that we can have
-// more control. Specifically we want to set NODE_ENV and make sure stdio is
-// inherited. We also run with --harmony directly so that we don't have to
-// respawn immediately. We should be able to reduce some of this complexity
-// when jest 0.5 is run on top of iojs.
-
 'use strict';
 
-var assign = require('object-assign');
 var async = require('async');
 var fs = require('fs');
 var glob = require('glob');
@@ -34,7 +27,7 @@ function getCollectCoverageOnlyFrom(callback) {
   var result = {};
 
   async.each(patterns, function(pattern) {
-    var options = assign({ nodir: true }, collectCoverageOnlyFrom[pattern]);
+    var options = Object.assign({ nodir: true }, collectCoverageOnlyFrom[pattern]);
     glob(pattern, options, function(err, files) {
       (files || []).reduce(function(object, key) {
         object[key] = true;
@@ -51,8 +44,9 @@ function getCollectCoverageOnlyFrom(callback) {
 function getJestConfig(callback) {
   var rootDir = path.resolve(buildPath, path.resolve(config.rootDir));
   getCollectCoverageOnlyFrom(function(err, data) {
-    callback(err, assign({}, config, {
+    callback(err, Object.assign({}, config, {
       rootDir: rootDir,
+      name: 'react',
       collectCoverage: true,
       collectCoverageOnlyFrom: data,
     }));
@@ -76,16 +70,25 @@ function writeTempConfig(callback) {
 }
 
 function run(done, configPath) {
-  grunt.log.writeln('running jest (this may take a while)');
+  grunt.log.writeln('running jest');
 
-  var args = ['--harmony', path.join('node_modules', 'jest-cli', 'bin', 'jest')];
+  var args = [
+    path.join('node_modules', 'jest', 'bin', 'jest'),
+    '--runInBand',
+    '--no-watchman',
+  ];
   if (configPath) {
     args.push('--config', configPath);
   }
   grunt.util.spawn({
     cmd: 'node',
     args: args,
-    opts: { stdio: 'inherit', env: { NODE_ENV: 'test' } },
+    opts: {
+      stdio: 'inherit',
+      env: Object.assign({}, process.env, {
+        NODE_ENV: 'test',
+      }),
+    },
   }, function(spawnErr, result, code) {
     if (spawnErr) {
       onError(spawnErr);

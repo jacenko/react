@@ -37,6 +37,9 @@
 var React = require('React');
 
 /**
+ * Deprecated: An an easy way to express two-way binding with React. 
+ * See https://facebook.github.io/react/docs/two-way-binding-helpers.html
+ *
  * @param {*} value current value of the link
  * @param {function} requestChange callback to request a change
  */
@@ -55,7 +58,7 @@ function ReactLink(value, requestChange) {
  */
 function createLinkTypeChecker(linkType) {
   var shapes = {
-    value: typeof linkType === 'undefined' ?
+    value: linkType === undefined ?
       React.PropTypes.any.isRequired :
       linkType.isRequired,
     requestChange: React.PropTypes.func.isRequired,

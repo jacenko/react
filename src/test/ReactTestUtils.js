@@ -16,16 +16,18 @@ var EventPluginHub = require('EventPluginHub');
 var EventPluginRegistry = require('EventPluginRegistry');
 var EventPropagators = require('EventPropagators');
 var React = require('React');
+var ReactDefaultInjection = require('ReactDefaultInjection');
 var ReactDOM = require('ReactDOM');
 var ReactDOMComponentTree = require('ReactDOMComponentTree');
 var ReactElement = require('ReactElement');
 var ReactBrowserEventEmitter = require('ReactBrowserEventEmitter');
 var ReactCompositeComponent = require('ReactCompositeComponent');
 var ReactInstanceMap = require('ReactInstanceMap');
+var ReactInstrumentation = require('ReactInstrumentation');
+var ReactReconciler = require('ReactReconciler');
 var ReactUpdates = require('ReactUpdates');
 var SyntheticEvent = require('SyntheticEvent');
 
-var assign = require('Object.assign');
 var emptyObject = require('emptyObject');
 var findDOMNode = require('findDOMNode');
 var invariant = require('invariant');
@@ -71,6 +73,10 @@ function findAllInRenderedTreeInternal(inst, test) {
 }
 
 /**
+ * Utilities for making it easy to test React components.
+ *
+ * See https://facebook.github.io/react/docs/test-utils.html
+ *
  * Todo: Support the entire DOM.scry query syntax. For now, these simple
  * utilities will suffice for testing purposes.
  * @lends ReactTestUtils
@@ -178,9 +184,6 @@ var ReactTestUtils = {
    * @return {array} an array of all the matches.
    */
   scryRenderedDOMComponentsWithClass: function(root, classNames) {
-    if (!Array.isArray(classNames)) {
-      classNames = classNames.split(/\s+/);
-    }
     return ReactTestUtils.findAllInRenderedTree(root, function(inst) {
       if (ReactTestUtils.isDOMComponent(inst)) {
         var className = inst.className;
@@ -189,6 +192,15 @@ var ReactTestUtils = {
           className = inst.getAttribute('class') || '';
         }
         var classList = className.split(/\s+/);
+
+        if (!Array.isArray(classNames)) {
+          invariant(
+            classNames !== undefined,
+            'TestUtils.scryRenderedDOMComponentsWithClass expects a ' +
+            'className as a second argument.'
+          );
+          classNames = classNames.split(/\s+/);
+        }
         return classNames.every(function(name) {
           return classList.indexOf(name) !== -1;
         });
@@ -366,9 +378,12 @@ ReactShallowRenderer.prototype.getMountedInstance = function() {
   return this._instance ? this._instance._instance : null;
 };
 
+var nextDebugID = 1;
+
 var NoopInternalComponent = function(element) {
   this._renderedOutput = element;
   this._currentElement = element;
+  this._debugID = nextDebugID++;
 };
 
 NoopInternalComponent.prototype = {
@@ -381,7 +396,7 @@ NoopInternalComponent.prototype = {
     this._currentElement = element;
   },
 
-  getNativeNode: function() {
+  getHostNode: function() {
     return undefined;
   },
 
@@ -393,10 +408,19 @@ NoopInternalComponent.prototype = {
   },
 };
 
-var ShallowComponentWrapper = function() { };
-assign(
+var ShallowComponentWrapper = function(element) {
+  // TODO: Consolidate with instantiateReactComponent
+  this._debugID = nextDebugID++;
+  var displayName = element.type.displayName || element.type.name || 'Unknown';
+  ReactInstrumentation.debugTool.onSetDisplayName(this._debugID, displayName);
+
+  this.construct(element);
+};
+Object.assign(
   ShallowComponentWrapper.prototype,
   ReactCompositeComponent.Mixin, {
+    _constructComponent:
+      ReactCompositeComponent.Mixin._constructComponentWithoutOwner,
     _instantiateReactComponent: function(element) {
       return new NoopInternalComponent(element);
     },
@@ -408,6 +432,11 @@ assign(
 );
 
 ReactShallowRenderer.prototype.render = function(element, context) {
+  // Ensure we've done the default injections. This might not be true in the
+  // case of a simple test that only requires React and the TestUtils in
+  // conjunction with an inline-requires transform.
+  ReactDefaultInjection.inject();
+
   invariant(
     ReactElement.isValidElement(element),
     'ReactShallowRenderer render(): Invalid component element.%s',
@@ -448,19 +477,21 @@ ReactShallowRenderer.prototype.getRenderOutput = function() {
 
 ReactShallowRenderer.prototype.unmount = function() {
   if (this._instance) {
-    this._instance.unmountComponent();
+    ReactReconciler.unmountComponent(this._instance, false);
   }
 };
 
 ReactShallowRenderer.prototype._render = function(element, transaction, context) {
   if (this._instance) {
-    this._instance.receiveComponent(element, transaction, context);
+    ReactReconciler.receiveComponent(
+      this._instance,
+      element,
+      transaction,
+      context
+    );
   } else {
-    var instance = new ShallowComponentWrapper(element.type);
-    instance.construct(element);
-
-    instance.mountComponent(transaction, null, null, context);
-
+    var instance = new ShallowComponentWrapper(element);
+    ReactReconciler.mountComponent(instance, transaction, null, null, context);
     this._instance = instance;
   }
 };
@@ -500,7 +531,10 @@ function makeSimulator(eventType) {
       fakeNativeEvent,
       node
     );
-    assign(event, eventData);
+    // Since we aren't using pooling, always persist the event. This will make
+    // sure it's marked and won't warn when setting additional properties.
+    event.persist();
+    Object.assign(event, eventData);
 
     if (dispatchConfig.phasedRegistrationNames) {
       EventPropagators.accumulateTwoPhaseDispatches(event);
@@ -561,7 +595,7 @@ buildSimulators();
 function makeNativeSimulator(eventType) {
   return function(domComponentOrNode, nativeEventData) {
     var fakeNativeEvent = new Event(eventType);
-    assign(fakeNativeEvent, nativeEventData);
+    Object.assign(fakeNativeEvent, nativeEventData);
     if (ReactTestUtils.isDOMComponent(domComponentOrNode)) {
       ReactTestUtils.simulateNativeEventOnDOMComponent(
         eventType,
